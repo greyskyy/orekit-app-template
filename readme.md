@@ -20,7 +20,7 @@ these instructions:
     1. Updating the import on line 4 with the application directory name from step 1.
 6. Update `src/utils/logging.py` by:
     1. Updating the logger on line 24, replacing *app_name_ with the application directory name fro step 1.
-
+7. Delete this list and update this `readme.md` with app-specific details.
 
 # App name
 
@@ -30,7 +30,7 @@ Build and activate the conda environment from the `environment.yaml`
 
 ```bash
 mamba env create -f environment.yaml
-mamba activate sat-scheduler
+mamba activate orekit-application
 python src/satscheduler
 ```
 
