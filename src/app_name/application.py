@@ -1,12 +1,50 @@
 """Satellite analytics engine."""
 
 import argparse
-from inspect import getmembers, isfunction
-from os import path
-import yaml
+from dataclasses import dataclass
+import importlib
+import pkgutil
+import inspect
+from typing import Any
 import orekit
-import app_name.apps as apps
+from os import path
+import sys
+import yaml
 from .utils import configure_logging
+
+
+@dataclass(frozen=True)
+class PluginModule:
+    helpstr: str
+    command: str
+    conf: Any
+    func: Any
+    aliases: list
+
+
+def process_module(name):
+    app_module = importlib.import_module(name)
+    aliases = []
+    helpstr = ""
+    func = None
+    conf = None
+    command = name.replace(f"{__package__}.apps.", "")
+
+    for n, value in inspect.getmembers(app_module):
+        if n == "__doc__":
+            helpstr = value
+        elif n == "SUBCOMMAND":
+            command = value
+        elif n == "config_args":
+            conf = value
+        elif n == "execute":
+            func = value
+        elif n == "ALIASES":
+            aliases = value
+
+    return PluginModule(
+        helpstr=helpstr, func=func, conf=conf, command=command, aliases=aliases
+    )
 
 
 def parseArgs() -> tuple[argparse.Namespace, dict]:
@@ -16,29 +54,14 @@ def parseArgs() -> tuple[argparse.Namespace, dict]:
         argparse.Namespace: the parsed arguments
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-o", "--output", help="Output html file.", type=str, default="index.html"
-    )
+
     parser.add_argument(
         "-c",
         "--config",
         help="path to the configuration yaml file",
         type=str,
         default="config.yaml",
-    )
-
-    applist = [m[0] for m in getmembers(apps, isfunction)]
-    parser.add_argument(
-        "-t",
-        "--run-tool",
-        help=f"Run a specific tool (default={applist[0] if len(applist) > 0 else 'None'})",
-        metavar="tool",
-        choices=applist,
-        dest="tool",
-        default=applist[0] if len(applist) == 1 else None,
-    )
-    parser.add_argument(
-        "--test", help="Run in test-mode.", action="store_true", default=False
+        dest="config",
     )
 
     loglevel = parser.add_argument_group(
@@ -80,10 +103,35 @@ def parseArgs() -> tuple[argparse.Namespace, dict]:
         help="Display highly detailed level of logging.",
     )
 
-    ##
-    # TODO: add more command line args here
-    #
-    ##
+    modules = [
+        process_module(name)
+        for module_loader, name, ispkg in pkgutil.iter_modules(
+            importlib.import_module(f"{__package__}.apps").__path__,
+            f"{__package__}.apps.",
+        )
+    ]
+
+    if len(modules) == 1:
+        module = modules[0]
+        if module.conf:
+            module.conf(parser)
+        parser.set_defaults(func=module.func)
+    else:
+
+        subparsers = parser.add_subparsers(
+            title="Subcommands",
+            description="Valid subcommands.",
+            help="Specify {subcommand} --help for more details",
+        )
+
+        for module in modules:
+            if module.func:
+                p = subparsers.add_parser(
+                    module.command, help=module.helpstr, aliases=module.aliases
+                )
+                if module.conf:
+                    module.conf(p)
+                p.set_defaults(func=module.func)
 
     args = parser.parse_args()
 
@@ -110,7 +158,7 @@ def runApp(vm=None):
     """
     if vm is None:
         vm = orekit.initVM()
-    
+
     import orekitfactory
 
     (args, config) = parseArgs()
@@ -123,8 +171,7 @@ def runApp(vm=None):
     else:
         orekitfactory.init_orekit()
 
-    for name, method in getmembers(apps, isfunction):
-        if name == args.tool:
-            return method(vm=vm, args=args, config=config)
-
-    raise ValueError(f"cannot run unknown tool: {args.tool}")
+    if "func" in args:
+        return args.func(vm=vm, args=args, config=config)
+    else:
+        print("No subcommand specified. Use --help for more info", file=sys.stderr)
